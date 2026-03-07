@@ -117,22 +117,22 @@ def getRegMemInit(instrNode, opRegDict, memOffset, useIndexedAddr):
 
          if opNode.attrib['type'] == 'reg':
             reg = opRegDict[opIdx]
-            regPrefix = re.sub(r'\d', '', reg)
 
             if reg in High8Regs:
                init += ['MOV {}, 0'.format(reg)]
-            elif 'MM' in regPrefix and xtype.startswith('f'):
-               init += ['MOV RAX, 0x4000000040000000']
-               for i in range(0, getRegSize(reg)//8, 8): init += ['MOV [R14+' + str(i) + '], RAX']
+            elif re.match(r'[XYZ]?MM', reg):
+               if xtype.startswith('f'):
+                  init += ['MOV RAX, 0x4000000040000000']
+                  for i in range(0, getRegSize(reg)//8, 8): init += ['MOV [R14+' + str(i) + '], RAX']
 
-               if isAVXInstr(instrNode):
-                  init += ['VMOVUPD ' + reg + ', [R14]']
+                  if isAVXInstr(instrNode):
+                     init += ['VMOVUPD ' + reg + ', [R14]']
+                  else:
+                     init += ['MOVUPD ' + reg + ', [R14]']
+               elif isAVXInstr(instrNode):
+                  init += ['VXORPS '+reg+', '+reg+', '+reg]
                else:
-                  init += ['MOVUPD ' + reg + ', [R14]']
-            elif regPrefix in ['XMM', 'YMM', 'ZMM'] and isAVXInstr(instrNode):
-               init += ['VXORPS '+reg+', '+reg+', '+reg]
-            elif 'MM' in regPrefix:
-               init += ['PXOR '+reg+', '+reg]
+                  init += ['PXOR '+reg+', '+reg]
          elif opNode.attrib['type'] == 'mem':
             if xtype.startswith('f'):
                init += ['MOV RAX, 0x4000000040000000']
@@ -145,6 +145,13 @@ def getRegMemInit(instrNode, opRegDict, memOffset, useIndexedAddr):
             init += ['VXORPS ' + vsibReg + ', ' + vsibReg + ', ' + vsibReg]
          elif useIndexedAddr:
             init += ['XOR {0}, {0}'.format(getIndexReg(instrNode, opNode))]
+
+   if instrNode.attrib['extension'] == 'AMX_TILE':
+      init += ['TILERELEASE', 'STTILECFG [R14]', 'MOV BYTE PTR [R14], 1', 'MOV BYTE PTR [R14+1], 0']
+      for i in range(8):
+         init.append(f'MOV WORD PTR [R14+{memOffset+16+(2*i)}], 64')
+         init.append(f'MOV BYTE PTR [R14+{memOffset+48+i}], 16')
+      init.append('LDTILECFG [r14]')
 
    return init
 
@@ -167,7 +174,8 @@ def runExperiment(instrNode, instrCode, init=None, unrollCount=500, loopCount=0,
    initCode = '; '.join(init)
    useLateInit = any((reg in initCode.upper()) for reg in High8Regs)
 
-   if (instrNode is not None) and (instrNode.attrib.get('vex', '') == '1' or instrNode.attrib.get('evex', '') == '1'):
+   if (instrNode is not None) and (instrNode.attrib.get('vex', '') == '1' or instrNode.attrib.get('evex', '') == '1') and (
+         not instrNode.attrib['category'] == 'AMX_TILE'):
       # vex and evex encoded instructions need a warm-up period before memory reads operate at full speed;
       # https://software.intel.com/en-us/forums/intel-isa-extensions/topic/710248
       reg = 'ZMM' if 'ZMM' in instrNode.attrib['iform'] else 'YMM'
@@ -200,7 +208,7 @@ def runExperiment(instrNode, instrCode, init=None, unrollCount=500, loopCount=0,
       localHtmlReports.append('<li>Init: <pre>' + re.sub(';[ \t]*(.)', r';\n\1', initCode) + '</pre></li>\n')
 
    localHtmlReports.append('<li><a href="javascript:;" onclick="this.outerHTML = \'<pre>' + nanoBenchCmd + '</pre>\'">Show nanoBench command</a></li>\n')
-   if debugOutput: print(nanoBenchCmd)
+   if debugOutput: print(nanoBenchCmd.replace('&quot;', '"'))
 
    setNanoBenchParameters(unrollCount=unrollCount, loopCount=loopCount, warmUpCount=warmUpCount, basicMode=basicMode)
 
@@ -411,7 +419,8 @@ def getInstrInstanceFromNode(instrNode, doNotWriteRegs=None, doNotReadRegs=None,
    if not doNotReadRegs: doNotReadRegs = []
    if not opRegDict: opRegDict = {}
 
-   if (instrNode.attrib['extension'] == 'AVX2GATHER') or instrNode.attrib['isa-set'].startswith('AVX512_FP16'):
+   if ((instrNode.attrib['extension'] == 'AVX2GATHER') or (instrNode.attrib.get('no_src_dest_match', '') == '1')
+         or (instrNode.attrib.get('no_reg_match', '') == '1')):
        useDistinctRegs=True
    hasMemOperand = len(instrNode.findall('./operand[@type="mem"]'))>0
 
@@ -1554,6 +1563,8 @@ def getDependencyBreakingInstrs(instrNode, opRegDict, ignoreOperand = None):
             depBreakingInstrs[opNode] = 'MOV ' + reg + ', 0' # don't use XOR as this would also break flag dependencies
          elif reg in ['RSP', 'RBP']:
             depBreakingInstrs[opNode] = 'MOV ' + reg + ', R14'
+      elif regPrefix in ['TMM']:
+         depBreakingInstrs[opNode] = f'TILEZERO {reg}'
       elif xtype.startswith('f'):
          if isAVXInstr(instrNode):
             depBreakingInstrs[opNode] = 'VMOVUPD ' + reg + ', ' + regPrefix + '15'
@@ -1962,7 +1973,7 @@ def getLatConfigsFromMemToReg(instrNode, instrI, memOpNode, targetReg, addrReg, 
 
    if targetReg.startswith('MM'):
       result.append(LatConfig(instrI, chainInstrs='MOVQ ' + targetReg + ', [' + addrReg + '];', chainLatency=1))
-   elif 'MM' in targetReg:
+   elif re.match(r'[XYZ]MM', targetReg):
       memWidth = int(memOpNode.attrib['width'])
 
       if memWidth == 32:
@@ -2008,7 +2019,7 @@ def getLatConfigsFromRegToMem(instrNode, instrI, reg, addrReg, memWidth, cRep):
 
    if reg.startswith('MM'):
       result.append(LatConfig(instrI, chainInstrs='MOVQ [' + addrReg + '], ' + reg + ';', chainLatency=1))
-   elif 'MM' in reg:
+   elif re.match(r'[XYZ]MM', reg):
       if memWidth <= 32:
          chainInstrFP = 'MOVSS'
          chainInstrInt = 'MOVD'
@@ -2090,10 +2101,11 @@ def getChainInstrForVectorRegs(instrNode, startReg, targetReg, cRep, cType):
 
 
 class LatConfig:
-   def __init__(self, instrI, chainInstrs='', chainLatency=0, init=None, basicMode=False, notes=None):
+   def __init__(self, instrI, chainInstrs='', chainLatency=0, selfChain=False, init=None, basicMode=False, notes=None):
       self.instrI: InstrInstance = instrI
-      self.chainInstrs = chainInstrs
+      self.chainInstrs: str = chainInstrs
       self.chainLatency = chainLatency
+      self.selfChain: bool = selfChain
       self.init = ([] if init is None else init)
       self.basicMode = basicMode
       self.notes = ([] if notes is None else notes)
@@ -2112,7 +2124,7 @@ class LatConfigList:
 
 LatResult = namedtuple('LatResult', ['minLat','maxLat','lat_sameReg','isUpperBound'])
 
-def getLatConfigLists(instrNode, startNode, targetNode, useDistinctRegs, alsoTestSameRegForSrcDst, addrMem, tpDict) -> List[LatConfigList] | None:
+def getLatConfigLists(instrNode, startNode, targetNode, useDistinctRegs, addrMem, tpDict) -> List[LatConfigList] | None:
    cRep = min(100, 2 + 2 * int(math.ceil(tpDict[instrNode].TP_single / 2))) # must be a multiple of 2
 
    if isDivOrSqrtInstr(instrNode):
@@ -2222,9 +2234,12 @@ def getLatConfigLists(instrNode, startNode, targetNode, useDistinctRegs, alsoTes
                   otherRegs = [x for x in regs2 if getCanonicalReg(x) != getCanonicalReg(reg1)]
                   if otherRegs:
                      reg2 = sortRegs(otherRegs)[0]
-                  if (alsoTestSameRegForSrcDst and (reg1 in regs2) and ('GATHER' not in instrNode.attrib['category'])
-                        and ('SCATTER' not in instrNode.attrib['category']) and not instrNode.attrib['isa-set'].startswith('AVX512_FP16')):
-                     configList.append(LatConfig(getInstrInstanceFromNode(instrNode, useDistinctRegs=True, opRegDict={startNodeIdx:reg1, targetNodeIdx:reg1})))
+                     if ((reg1 in regs2) and (reg2 in regs1) and ('GATHER' not in instrNode.attrib['category'])
+                           and ('SCATTER' not in instrNode.attrib['category'])):
+                        configList.append(LatConfig(
+                           instrI=getInstrInstanceFromNode(instrNode, useDistinctRegs=True, opRegDict={startNodeIdx:reg1, targetNodeIdx:reg2}),
+                           chainInstrs=getInstrInstanceFromNode(instrNode, useDistinctRegs=True, opRegDict={startNodeIdx:reg2, targetNodeIdx:reg1}).asm,
+                           selfChain=True))
 
          instrI = getInstrInstanceFromNode(instrNode, useDistinctRegs=useDistinctRegs, opRegDict={startNodeIdx:reg1, targetNodeIdx:reg2})
 
@@ -2292,9 +2307,6 @@ def getLatConfigLists(instrNode, startNode, targetNode, useDistinctRegs, alsoTes
                if not (reg1Prefix == 'YMM' and instrNode.attrib['extension'] == 'AVX'): # integers in YMM registers are only supported by AVX>=2
                   chainInstrInt, chainLatencyInt = getChainInstrForVectorRegs(instrNode, reg2, reg1, cRep, 'Int')
                   configList.append(LatConfig(instrI, chainInstrs=chainInstrInt, chainLatency=chainLatencyInt))
-            else:
-               print('invalid reg prefix: ' + reg1Prefix)
-               return None
          else:
             configList.isUpperBound = True
             # find all other instrs from reg2 to reg1
@@ -2501,7 +2513,7 @@ def getLatConfigLists(instrNode, startNode, targetNode, useDistinctRegs, alsoTes
                chainInstrs += 'MOV {}, {}'.format(reg, reg) # 'clean' reg again; this is not on the critical path
                chainLatency += basicLatency['MOVSX_R32_R8h']
             configList.append(LatConfig(instrI, chainInstrs=chainInstrs, chainLatency=chainLatency))
-         elif 'MM' in reg:
+         elif re.match(r'[XYZ]?MM', reg):
             if addrMem in ['addr', 'addr_index']:
                # addr -> reg
                configList.isUpperBound = True
@@ -2565,12 +2577,12 @@ def getLatConfigLists(instrNode, startNode, targetNode, useDistinctRegs, alsoTes
                configList.isUpperBound = True
                chainReg = (addrReg if addrMem == 'addr' else indexReg)
                memStr = addrReg + ('+'+indexReg if addrMem == 'addr_index' else '')
-               chainInstrs = 'MOV ' + regToSize('R12', min(64, memWidth)) + ', [' + memStr + '];'
-               reg2Size = min(32, memWidth)
+               chainInstrs = 'MOV ' + regToSize('R12', min(64, max(8, memWidth))) + ', [' + memStr + '];'
+               reg2Size = min(32, max(8, memWidth))
                chainInstrs += ('MOVSX R12, ' + regToSize('R12', reg2Size) + ';') * cRep
                chainInstrs += 'XOR ' + chainReg + ', R12; XOR ' + chainReg + ', R12;' + ('TEST R15, R15;' if instrReadsFlags else '')
                chainLatency = basicLatency['MOVSX_R64_R'+str(reg2Size)] * cRep + 2*basicLatency['XOR']
-               chainLatency += int(basicLatency['MOV_10MOVSX_MOV_'+str(min(64, memWidth))] >= 12) # 0 if CPU supports zero-latency store forwarding
+               chainLatency += int(basicLatency['MOV_10MOVSX_MOV_'+str(min(64, max(8, memWidth)))] >= 12) # 0 if CPU supports zero-latency store forwarding
                # we use basicMode, as the measurements for these benchmarks are often not very stable, in particular on, e.g., HSW
                configList.append(LatConfig(instrI, chainInstrs=chainInstrs, chainLatency=chainLatency, basicMode=True))
                # on some microarch. (e.g., HSW), an additional nop instr. can sometimes lead to a better port scheduling
@@ -2693,7 +2705,7 @@ def getLatencies(instrNode, instrNodeList, tpDict, tpDictSameReg, htmlReports):
 
                configI = 0
                for useDistinctRegs in ([True, False] if instrNode in tpDictSameReg else [True]):
-                  latConfigLists = getLatConfigLists(instrNode, opNode1, opNode2, useDistinctRegs, (instrNode not in tpDictSameReg), addrMem, tpDict)
+                  latConfigLists = getLatConfigLists(instrNode, opNode1, opNode2, useDistinctRegs, addrMem, tpDict)
                   if latConfigLists is None: continue
 
                   minLat = sys.maxsize
@@ -2850,7 +2862,9 @@ def getLatencies(instrNode, instrNodeList, tpDict, tpDictSameReg, htmlReports):
 
                         cycles = int(cycles+.2)
 
-                        if latConfig.chainLatency:
+                        if latConfig.selfChain:
+                           cycles = cycles // 2
+                        elif latConfig.chainLatency:
                            cycles -= latConfig.chainLatency
 
                         cycles = max(0, cycles) # for dep. breaking instructions (like XOR), cycles might be negative after subtracting chainLatency
@@ -3089,10 +3103,10 @@ def filterInstructions(XMLRoot):
       if isaSet.startswith('AVX512_VP2INTERSECT') and not cpuid.get_bit(edx7, 8): instrSet.discard(XMLInstr)
       if extension == 'SERIALIZE' and not cpuid.get_bit(edx7, 14): instrSet.discard(XMLInstr)
       if extension == 'PCONFIG' and not cpuid.get_bit(edx7, 18): instrSet.discard(XMLInstr)
-      if extension == 'AMX_BF16' and not cpuid.get_bit(edx7, 22): instrSet.discard(XMLInstr)
+      if isaSet == 'AMX_BF16' and not cpuid.get_bit(edx7, 22): instrSet.discard(XMLInstr)
       if isaSet.startswith('AVX512_FP16') and not cpuid.get_bit(edx7, 23): instrSet.discard(XMLInstr)
       if extension == 'AMX_TILE' and not cpuid.get_bit(edx7, 24): instrSet.discard(XMLInstr)
-      if extension == 'AMX_INT8' and not cpuid.get_bit(edx7, 25): instrSet.discard(XMLInstr)
+      if isaSet == 'AMX_INT8' and not cpuid.get_bit(edx7, 25): instrSet.discard(XMLInstr)
       if extension == 'SHA512' and not cpuid.get_bit(eax7_1, 0): instrSet.discard(XMLInstr)
       if extension == 'SM3' and not cpuid.get_bit(eax7_1, 1): instrSet.discard(XMLInstr)
       if extension == 'SM4' and not cpuid.get_bit(eax7_1, 2): instrSet.discard(XMLInstr)
@@ -3103,7 +3117,7 @@ def filterInstructions(XMLRoot):
       if extension == 'FRED' and not cpuid.get_bit(eax7_1, 17): instrSet.discard(XMLInstr)
       if extension == 'LKGS' and not cpuid.get_bit(eax7_1, 18): instrSet.discard(XMLInstr)
       if extension == 'WRMSRNS' and not cpuid.get_bit(eax7_1, 19): instrSet.discard(XMLInstr)
-      if extension == 'AMX_FP16' and not cpuid.get_bit(eax7_1, 21): instrSet.discard(XMLInstr)
+      if isaSet == 'AMX_FP16' and not cpuid.get_bit(eax7_1, 21): instrSet.discard(XMLInstr)
       if extension == 'HRESET' and not cpuid.get_bit(eax7_1, 22): instrSet.discard(XMLInstr)
       if extension == 'AVX_IFMA' and not cpuid.get_bit(eax7_1, 23): instrSet.discard(XMLInstr)
       if extension == 'MSRLIST' and not cpuid.get_bit(eax7_1, 27): instrSet.discard(XMLInstr)
@@ -3190,7 +3204,8 @@ def filterInstructions(XMLRoot):
       # System instructions
       if extension in ['HRESET', 'INVPCID', 'MONITOR', 'MONITORX', 'PCONFIG', 'SMAP', 'SNP', 'UINTR']: instrSet.discard(XMLInstr)
       if XMLInstr.attrib['category'] in ['INTERRUPT', 'SEGOP', 'SYSCALL', 'SYSRET']: instrSet.discard(XMLInstr)
-      if XMLInstr.attrib['iclass'] in ['CALL_FAR', 'HLT', 'INVD', 'IRET', 'IRETD', 'IRETQ', 'JMP_FAR', 'LTR', 'RET_FAR', 'UD2']: instrSet.discard(XMLInstr)
+      if XMLInstr.attrib['iclass'] in ['CALL_FAR', 'HLT', 'ENQCMD', 'ENQCMDS', 'INVD', 'IRET', 'IRETD', 'IRETQ', 'JMP_FAR', 'LTR', 'RET_FAR', 'UD2']:
+         instrSet.discard(XMLInstr)
       if 'XRSTOR' in XMLInstr.attrib['iclass']: instrSet.discard(XMLInstr)
       if XMLInstr.attrib['iform'] in ['POP_FS', 'POP_GS', 'MOV_CR_CR_GPR64', 'MOV_SEG_MEMw', 'MOV_SEG_GPR16', 'SWAPGS']: instrSet.discard(XMLInstr)
 
@@ -3255,6 +3270,10 @@ def main():
                         'UOPS_PORT_23A', 'UOPS_DISPATCHED.INT_EU_ALL', 'UOPS_DISPATCHED.ALU', 'UOPS_DISPATCHED.LOAD', 'UOPS_DISPATCHED.SLOW',
                         'UOPS_DISPATCHED.STD', 'UOPS_DISPATCHED.SHIFT', 'UOPS_DISPATCHED.JMP', 'UOPS_DISPATCHED.STA', 'UOPS_DISPATCHED.V0',
                         'UOPS_DISPATCHED.V1', 'UOPS_DISPATCHED.V2', 'UOPS_DISPATCHED.V3', 'DIV_CYCLES', 'ILD_STALL.LCP', 'INST_DECODED.DEC0', 'UOPS_MITE>=1'])
+
+      if cpuid.get_bit(cpu(0x07)[3], 24):
+         # If AMX is supported, enable it in XFD.
+         subprocess.check_output('sudo wrmsr -a 0x1C4 0', shell=True)
 
    try:
       subprocess.check_output('mkdir -p /tmp/ramdisk; sudo mount -t tmpfs -o size=100M none /tmp/ramdisk/', shell=True)
