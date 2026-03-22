@@ -49,7 +49,7 @@ def main():
                for latNode1, latNode2 in zip(mNode1.findall('./latency'), mNode2.findall('./latency')):
                   latStr1 = ET.tostring(latNode1, encoding='utf-8').decode().strip()
                   latStr2 = ET.tostring(latNode2, encoding='utf-8').decode().strip()
-                  if latNode1.attrib != latNode2.attrib:
+                  if latNode1.get('cycles') != latNode2.get('cycles'):
                      latDiff += 1
                      if args.printDiff: print(instrStr)
                      if args.printDiff: print('  ' + latStr1)
