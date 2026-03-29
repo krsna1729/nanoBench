@@ -1489,7 +1489,11 @@ def getBasicLatencies(instrNodeList):
 
       testCmovResult = runExperiment(None, 'TEST RAX, RAX; CMOV' + flag[0] + ' RAX, RAX')
       testCmovResultNop = runExperiment(None, 'TEST RAX, RAX; CMOV' + flag[0] + ' RAX, RAX; NOP')
-      basicLatency['CMOV' + flag[0]] = min(int(testCmovResult['Core cycles'] + .2), int(testCmovResultNop['Core cycles'] + .2)) - basicLatency['TEST']
+      # On, e.g., ARL-P, the latency of TEST+CMOV is higher than expected (between 2 and 3, but closer to 3); we therefore
+      # additionally test with another instruction that has a dependency from RAX to the flags.
+      testCmovResultAdd = runExperiment(None, 'ADD RBX, RAX; CMOV' + flag[0] + ' RAX, RAX')
+      basicLatency['CMOV' + flag[0]] = min(min(int(testCmovResult['Core cycles'] + .2), int(testCmovResultNop['Core cycles'] + .2)) - basicLatency['TEST'],
+                                           int(testCmovResultAdd['Core cycles'] + .2) - 1)
 
    for instr in ['ANDPS', 'ANDPD', 'ORPS', 'ORPD', 'PAND', 'POR']:
       result = runExperiment(instrNodeDict[instr + ' (XMM, XMM)'], instr + ' XMM1, XMM1')

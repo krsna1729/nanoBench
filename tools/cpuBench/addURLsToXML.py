@@ -14,7 +14,7 @@ def main():
    args = parser.parse_args()
 
    html = urllib.request.urlopen('https://www.felixcloutier.com/x86/').read().decode('utf-8').replace(u'\u2013', '-').replace(u'\u2217', '*')
-   lines = re.findall('href="\./(.*?)">(.*?)</a>.*?</td><td>(.*?)</td>', html) # Example: ('ADC.html', 'ADC', 'Add with Carry'),
+   lines = re.findall("href='/x86/(.*?)'>(.*?)</a>.*?</td><td>(.*?)</td>", html) # Example: ('/x86/adc', 'ADC', 'Add with Carry'),
    lineDict = {(line[0],line[1]):line for line in lines}
 
    root = ET.parse(args.input).getroot()
@@ -23,114 +23,118 @@ def main():
       iform = instrNode.attrib['iform']
       extension = instrNode.attrib['extension']
 
-      if extension in ['CET', 'MONITORX', 'SSE4a', 'SVM', 'TBM', 'TSX_LDTRK', 'XOP']:
+      if extension in ['MONITORX', 'SSE4a', 'SVM', 'TBM', 'TSX_LDTRK', 'XOP', 'RAO_INT', 'APXEVEX', 'APXLEGACY', 'CMPCCXADD', '3DNOW']:
          continue
 
       matchingLines = []
       if iclass == 'INT':
-         matchingLines = [lineDict[('INTn:INTO:INT3:INT1.html', 'INT n')]]
+         matchingLines = [lineDict[('intn:into:int3:int1', 'INT n')]]
       if iclass == 'MOV':
-         matchingLines = [lineDict[('MOV.html', 'MOV')]]
+         matchingLines = [lineDict[('mov', 'MOV')]]
       elif iclass == 'MOV_CR':
-         matchingLines = [lineDict[('MOV-1.html', 'MOV')]]
+         matchingLines = [lineDict[('mov-1', 'MOV')]]
       elif iclass == 'MOV_DR':
-         matchingLines = [lineDict[('MOV-2.html', 'MOV')]]
+         matchingLines = [lineDict[('mov-2', 'MOV')]]
       elif iclass == 'VMRESUME':
-         matchingLines = [lineDict[('VMLAUNCH:VMRESUME.html', 'VMRESUME')]]
+         matchingLines = [lineDict[('vmlaunch:vmresume', 'VMRESUME')]]
       elif iclass == 'SCASQ':
-         matchingLines = [lineDict[('SCAS:SCASB:SCASW:SCASD.html', 'SCAS')]]
+         matchingLines = [lineDict[('scas:scasb:scasw:scasd', 'SCAS')]]
       elif iclass == 'UD2':
-         matchingLines = [lineDict[('UD.html', 'UD')]]
+         matchingLines = [lineDict[('ud', 'UD')]]
       elif iclass in ['CMPSD', 'VCMPSD', 'CMPSD_XMM']:
          if extension == 'BASE':
-            matchingLines = [lineDict[('CMPS:CMPSB:CMPSW:CMPSD:CMPSQ.html', 'CMPSD')]]
+            matchingLines = [lineDict[('cmps:cmpsb:cmpsw:cmpsd:cmpsq', 'CMPSD')]]
          else:
-            matchingLines = [lineDict[('CMPSD.html', 'CMPSD')]]
+            matchingLines = [lineDict[('cmpsd', 'CMPSD')]]
       elif iclass in ['IRETW', 'IRETD', 'IRETQ']:
-         matchingLines = [lineDict[('IRET:IRETD:IRETQ.html', 'IRET')]]
+         matchingLines = [lineDict[('iret:iretd:iretq', 'IRET')]]
       elif iclass in ['MOVQ', 'VMOVQ']:
          if 'GPR' in iform:
-            matchingLines = [lineDict[('MOVD:MOVQ.html', 'MOVQ')]]
+            matchingLines = [lineDict[('movd:movq', 'MOVQ')]]
          else:
-            matchingLines = [lineDict[('MOVQ.html', 'MOVQ')]]
+            matchingLines = [lineDict[('movq', 'MOVQ')]]
       elif iclass in ['MOVSD', 'VMOVSD', 'MOVSD_XMM']:
          if extension == 'BASE':
-            matchingLines = [lineDict[('MOVS:MOVSB:MOVSW:MOVSD:MOVSQ.html', 'MOVSD')]]
+            matchingLines = [lineDict[('movs:movsb:movsw:movsd:movsq', 'MOVSD')]]
          else:
-            matchingLines = [lineDict[('MOVSD.html', 'MOVSD')]]
+            matchingLines = [lineDict[('movsd', 'MOVSD')]]
       elif iclass == 'VGATHERDPD':
          if '512' in extension:
-            matchingLines = [lineDict[('VGATHERDPS:VGATHERDPD.html', 'VGATHERDPD')]]
+            matchingLines = [lineDict[('vgatherdps:vgatherdpd', 'VGATHERDPD')]]
          else:
-            matchingLines = [lineDict[('VGATHERDPD:VGATHERQPD.html', 'VGATHERDPD')]]
+            matchingLines = [lineDict[('vgatherdpd:vgatherqpd', 'VGATHERDPD')]]
       elif iclass == 'VGATHERDPS':
          if '512' in extension:
-            matchingLines = [lineDict[('VGATHERDPS:VGATHERDPD.html', 'VGATHERDPS')]]
+            matchingLines = [lineDict[('vgatherdps:vgatherdpd', 'VGATHERDPS')]]
          else:
-            matchingLines = [lineDict[('VGATHERDPS:VGATHERQPS.html', 'VGATHERDPS')]]
+            matchingLines = [lineDict[('vgatherdps:vgatherqps', 'VGATHERDPS')]]
       elif iclass == 'VGATHERQPD':
          if '512' in extension:
-            matchingLines = [lineDict[('VGATHERQPS:VGATHERQPD.html', 'VGATHERQPD')]]
+            matchingLines = [lineDict[('vgatherqps:vgatherqpd', 'VGATHERQPD')]]
          else:
-            matchingLines = [lineDict[('VGATHERDPD:VGATHERQPD.html', 'VGATHERQPD')]]
+            matchingLines = [lineDict[('vgatherdpd:vgatherqpd', 'VGATHERQPD')]]
       elif iclass == 'VGATHERQPS':
          if '512' in extension:
-            matchingLines = [lineDict[('VGATHERQPS:VGATHERQPD.html', 'VGATHERQPS')]]
+            matchingLines = [lineDict[('vgatherqps:vgatherqpd', 'VGATHERQPS')]]
          else:
-            matchingLines = [lineDict[('VGATHERDPS:VGATHERQPS.html', 'VGATHERQPS')]]
+            matchingLines = [lineDict[('vgatherdps:vgatherqps', 'VGATHERQPS')]]
       elif iclass == 'VPGATHERDD':
          if '512' in extension:
-            matchingLines = [lineDict[('VPGATHERDD:VPGATHERDQ.html', 'VPGATHERDD')]]
+            matchingLines = [lineDict[('vpgatherdd:vpgatherdq', 'VPGATHERDD')]]
          else:
-            matchingLines = [lineDict[('VPGATHERDD:VPGATHERQD.html', 'VPGATHERDD')]]
+            matchingLines = [lineDict[('vpgatherdd:vpgatherqd', 'VPGATHERDD')]]
       elif iclass == 'VPGATHERDQ':
          if '512' in extension:
-            matchingLines = [lineDict[('VPGATHERDD:VPGATHERDQ.html', 'VPGATHERDQ')]]
+            matchingLines = [lineDict[('vpgatherdd:vpgatherdq', 'VPGATHERDQ')]]
          else:
-            matchingLines = [lineDict[('VPGATHERDQ:VPGATHERQQ.html', 'VPGATHERDQ')]]
+            matchingLines = [lineDict[('vpgatherdq:vpgatherqq', 'VPGATHERDQ')]]
       elif iclass == 'VPGATHERQD':
          if '512' in extension:
-            matchingLines = [lineDict[('VPGATHERQD:VPGATHERQQ.html', 'VPGATHERQD')]]
+            matchingLines = [lineDict[('vpgatherqd:vpgatherqq', 'VPGATHERQD')]]
          else:
-            matchingLines = [lineDict[('VPGATHERDD:VPGATHERQD.html', 'VPGATHERQD')]]
+            matchingLines = [lineDict[('vpgatherdd:vpgatherqd', 'VPGATHERQD')]]
       elif iclass == 'VPGATHERQQ':
          if '512' in extension:
-            matchingLines = [lineDict[('VPGATHERQD:VPGATHERQQ.html', 'VPGATHERQQ')]]
+            matchingLines = [lineDict[('vpgatherqd:vpgatherqq', 'VPGATHERQQ')]]
          else:
-            matchingLines = [lineDict[('VPGATHERDQ:VPGATHERQQ.html', 'VPGATHERQQ')]]
+            matchingLines = [lineDict[('vpgatherdq:vpgatherqq', 'VPGATHERQQ')]]
       elif iclass.startswith('PMOVSX') or iclass.startswith('VPMOVSX'):
-         matchingLines = [lineDict[('PMOVSX.html', 'PMOVSX')]]
+         matchingLines = [lineDict[('pmovsx', 'PMOVSX')]]
       elif iclass.startswith('PMOVZX') or iclass.startswith('VPMOVZX'):
-         matchingLines = [lineDict[('PMOVZX.html', 'PMOVZX')]]
+         matchingLines = [lineDict[('pmovzx', 'PMOVZX')]]
       elif iclass.startswith('REP'):
-         matchingLines = [lineDict[('REP:REPE:REPZ:REPNE:REPNZ.html', 'REP')]]
+         matchingLines = [lineDict[('rep:repe:repz:repne:repnz', 'REP')]]
       elif iclass.startswith('VBROADCAST'):
-         matchingLines = [lineDict[('VBROADCAST.html', 'VBROADCAST')]]
+         matchingLines = [lineDict[('vbroadcast', 'VBROADCAST')]]
       elif iclass.startswith('VMASKMOV'):
-         matchingLines = [lineDict[('VMASKMOV.html', 'VMASKMOV')]]
+         matchingLines = [lineDict[('vmaskmov', 'VMASKMOV')]]
       elif iclass.startswith('VPANDN'):
-         matchingLines = [lineDict[('PANDN.html', 'PANDN')]]
+         matchingLines = [lineDict[('pandn', 'PANDN')]]
       elif iclass.startswith('VPAND'):
-         matchingLines = [lineDict[('PAND.html', 'PAND')]]
+         matchingLines = [lineDict[('pand', 'PAND')]]
       elif iclass.startswith('VPBROADCASTM'):
-         matchingLines = [lineDict[('VPBROADCASTM.html', 'VPBROADCASTM')]]
+         matchingLines = [lineDict[('vpbroadcastm', 'VPBROADCASTM')]]
       elif iclass.startswith('VPMASKMOV'):
-         matchingLines = [lineDict[('VPMASKMOV.html', 'VPMASKMOV')]]
+         matchingLines = [lineDict[('vpmaskmov', 'VPMASKMOV')]]
       elif iclass.startswith('VPOR'):
-         matchingLines = [lineDict[('POR.html', 'POR')]]
+         matchingLines = [lineDict[('por', 'POR')]]
       elif iclass.startswith('VPXOR'):
-         matchingLines = [lineDict[('PXOR.html', 'PXOR')]]
+         matchingLines = [lineDict[('pxor', 'PXOR')]]
       else:
          for line in lines:
             mnemonic = line[1].upper()
             if iclass in [mnemonic, 'V'+mnemonic, mnemonic+'_LOCK', mnemonic+'_FAR', mnemonic+'_NEAR', mnemonic+'_SSE4', mnemonic+'64']:
                matchingLines.append(line)
-            if 'CC' in mnemonic and iclass.startswith(mnemonic.replace('CC', '')) and not iclass in ['JMP', 'JMP_FAR', 'LOOP']:
+            if 'CC' in mnemonic and iclass.startswith(mnemonic.replace('CC', '')) and not iclass in ['JMP', 'JMP_FAR', 'LOOP', 'SETSSBSY']:
                matchingLines.append(line)
 
       if len(matchingLines) > 1:
          print('Duplicate link found for ' + iclass)
+         print(matchingLines)
          exit(1)
+      if len(matchingLines) == 0:
+         print('No link found for ' + iclass + ' (extension: ' + extension + ')')
+         continue
 
       instrNode.attrib['url'] = 'uops.info/html-instr/' + canonicalizeInstrString(instrNode.attrib['string']) + '.html'
       if matchingLines:
